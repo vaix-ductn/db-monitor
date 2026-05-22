@@ -1,0 +1,83 @@
+# CDC Monitor — Lightweight Stack
+# Replaces: Zookeeper + Kafka + kafka-ui + Debezium (saves ~1.25GB RAM)
+#
+# Run from your project root (where docker-compose.yaml is):
+#   docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml up -d
+#
+# Stop monitor only:
+#   docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml stop cdc-reader cdc-redis cdc-backend cdc-frontend
+
+services:
+
+  # Override db service to enable MySQL binlog (required for CDC)
+  # NOTE: First time applying this override will recreate the db container.
+  db:
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+    volumes:
+      - mysql_monitor_data:/var/lib/mysql
+
+  # Python binlog reader — replaces Debezium + Kafka + Zookeeper
+  cdc-reader:
+    build:
+      context: ./monitor/reader
+    container_name: cdc-reader
+    depends_on:
+      - db
+      - cdc-redis
+    environment:
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_USER: andes_cloud
+      MYSQL_PASSWORD: andes_cloud
+      MYSQL_DATABASE: andes_cloud
+      REDIS_HOST: cdc-redis
+    networks:
+      - andes-cloud-network
+      - monitor-net
+    restart: always
+
+  cdc-redis:
+    image: redis:7-alpine
+    container_name: cdc-redis
+    networks:
+      - monitor-net
+    restart: always
+
+  cdc-backend:
+    build:
+      context: ./monitor/backend
+    container_name: cdc-backend
+    depends_on:
+      - cdc-redis
+    ports:
+      - "8099:8000"
+    environment:
+      REDIS_HOST: cdc-redis
+    networks:
+      - monitor-net
+    restart: always
+
+  cdc-frontend:
+    build:
+      context: ./monitor/frontend
+      args:
+        VITE_API_PORT: 8099
+    container_name: cdc-frontend
+    depends_on:
+      - cdc-backend
+    ports:
+      - "3001:80"
+    networks:
+      - monitor-net
+    restart: always
+
+networks:
+  monitor-net:
+    driver: bridge
+
+volumes:
+  mysql_monitor_data:
