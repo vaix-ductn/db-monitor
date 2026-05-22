@@ -33,7 +33,7 @@ MySQL binlog
 - Docker Desktop
 - Docker Compose v2
 - PowerShell 5.1+ (Windows)
-- The project's `docker-compose.yaml` must define a MySQL service named `db` with container name `andes_cloud_db`
+- The project's `docker-compose.yaml` must define a MySQL service named `db` with container name `myapp_db`
 
 ---
 
@@ -72,7 +72,7 @@ The script will:
 ### 3. Run Django migrations (first run only)
 
 ```powershell
-docker exec andes_cloud_app python manage.py migrate
+docker exec myapp_app python manage.py migrate
 ```
 
 ### 4. Open the dashboard
@@ -119,9 +119,9 @@ To stop only the monitor services (DB and main app keep running):
 Key settings are defined at the top of `start.ps1`:
 
 ```powershell
-$DB_CONTAINER = "andes_cloud_db"   # MySQL container name
-$DB_ROOT_PASS = "andes_cloud"      # MySQL root password
-$DB_USER      = "andes_cloud"      # MySQL user monitored by cdc-reader
+$DB_CONTAINER = "myapp_db"         # MySQL container name
+$DB_ROOT_PASS = "rootpassword"     # MySQL root password
+$DB_USER      = "dbuser"           # MySQL user monitored by cdc-reader
 ```
 
 The `cdc-reader` service reads these environment variables (set in `docker-compose.monitor.yml`):
@@ -130,9 +130,9 @@ The `cdc-reader` service reads these environment variables (set in `docker-compo
 |---|---|---|
 | `MYSQL_HOST` | `db` | MySQL service name in Docker network |
 | `MYSQL_PORT` | `3306` | MySQL port |
-| `MYSQL_USER` | `andes_cloud` | MySQL user |
-| `MYSQL_PASSWORD` | `andes_cloud` | MySQL password |
-| `MYSQL_DATABASE` | `andes_cloud` | Database to monitor (all tables) |
+| `MYSQL_USER` | `dbuser` | MySQL user |
+| `MYSQL_PASSWORD` | `dbpassword` | MySQL password |
+| `MYSQL_DATABASE` | `myapp` | Database to monitor (all tables) |
 | `REDIS_HOST` | `cdc-redis` | Redis service name |
 
 ---
@@ -151,8 +151,8 @@ The `cdc-reader` service reads these environment variables (set in `docker-compo
 The MySQL user needs the following privileges (applied automatically by `start.ps1`):
 
 ```sql
-GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'andes_cloud'@'%';
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'andes_cloud'@'%';
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'dbuser'@'%';
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'dbuser'@'%';
 ```
 
 MySQL binary logging is enabled via Docker Compose command override:
