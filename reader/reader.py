@@ -82,7 +82,6 @@ def connect_stream():
                 connection_settings=MYSQL_SETTINGS,
                 server_id=200,
                 only_events=[WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent],
-                only_schemas=[MYSQL_DATABASE],
                 resume_stream=True,
                 blocking=True,
             )
@@ -90,7 +89,7 @@ def connect_stream():
                 f"[Reader] Connected to MySQL binlog at {MYSQL_SETTINGS['host']}:{MYSQL_SETTINGS['port']}",
                 flush=True,
             )
-            print(f"[Reader] Monitoring all tables in '{MYSQL_DATABASE}'", flush=True)
+            print("[Reader] Monitoring all databases", flush=True)
             return stream
         except Exception as e:
             print(f"[Reader] Waiting for MySQL binlog... {e}", flush=True)
