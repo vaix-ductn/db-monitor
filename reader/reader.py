@@ -2,7 +2,9 @@ import os
 import json
 import time
 import datetime
+import threading
 import redis
+import pymysql
 from decimal import Decimal
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
@@ -12,6 +14,12 @@ MYSQL_SETTINGS = {
     "port": int(os.environ.get("MYSQL_PORT", "3306")),
     "user": os.environ.get("MYSQL_USER", "andes_cloud"),
     "passwd": os.environ.get("MYSQL_PASSWORD", "andes_cloud"),
+}
+PYMYSQL_CONN = {
+    "host": MYSQL_SETTINGS["host"],
+    "port": MYSQL_SETTINGS["port"],
+    "user": MYSQL_SETTINGS["user"],
+    "password": MYSQL_SETTINGS["passwd"],
 }
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "andes_cloud")
 REDIS_HOST = os.environ.get("REDIS_HOST", "cdc-redis")
@@ -28,6 +36,31 @@ def serialize(obj):
     if isinstance(obj, set):
         return list(obj)
     return str(obj)
+
+
+def push_schema(r):
+    """Push all user databases + tables to Redis every 60s for frontend dropdowns."""
+    while True:
+        try:
+            conn = pymysql.connect(**PYMYSQL_CONN)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT TABLE_SCHEMA, TABLE_NAME
+                    FROM information_schema.TABLES
+                    WHERE TABLE_TYPE = 'BASE TABLE'
+                      AND TABLE_SCHEMA NOT IN
+                          ('mysql','information_schema','performance_schema','sys')
+                    ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """)
+                schema: dict = {}
+                for db, tbl in cur.fetchall():
+                    schema.setdefault(db, []).append(tbl)
+            conn.close()
+            r.set("db_schema", json.dumps(schema))
+            print(f"[Schema] Updated: {list(schema.keys())}", flush=True)
+        except Exception as e:
+            print(f"[Schema] Error fetching schema: {e}", flush=True)
+        time.sleep(60)
 
 
 def connect_redis():
@@ -65,6 +98,7 @@ def connect_stream():
 
 
 r = connect_redis()
+threading.Thread(target=push_schema, args=(r,), daemon=True).start()
 stream = connect_stream()
 
 for binlog_event in stream:

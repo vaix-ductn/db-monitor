@@ -3,10 +3,11 @@ import { Filters } from '../hooks/useEvents'
 interface Props {
   filters: Filters
   onChange: (f: Filters) => void
+  databases: string[]
   tables: string[]
 }
 
-export function FilterBar({ filters, onChange, tables }: Props) {
+export function FilterBar({ filters, onChange, databases, tables }: Props) {
   return (
     <div className="flex gap-3 px-4 py-2 bg-gray-900 border-b border-gray-800 flex-wrap shrink-0">
       <select
@@ -19,6 +20,17 @@ export function FilterBar({ filters, onChange, tables }: Props) {
         <option value="u">UPDATE</option>
         <option value="d">DELETE</option>
         <option value="r">SNAPSHOT</option>
+      </select>
+
+      <select
+        className="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700"
+        value={filters.database}
+        onChange={e => onChange({ ...filters, database: e.target.value, table: '' })}
+      >
+        <option value="">All Databases</option>
+        {databases.map(db => (
+          <option key={db} value={db}>{db}</option>
+        ))}
       </select>
 
       <select

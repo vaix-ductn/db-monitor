@@ -10,7 +10,7 @@ const API_PORT = import.meta.env.VITE_API_PORT || '8099'
 const API_BASE = `http://localhost:${API_PORT}`
 
 function App() {
-  const { events, filtered, addEvent, filters, setFilters, tables } = useEvents()
+  const { events, filtered, addEvent, filters, setFilters, tables, databases } = useEvents()
   const [selected, setSelected] = useState<CdcEvent | null>(null)
 
   useEffect(() => {
@@ -30,7 +30,7 @@ function App() {
       </header>
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col flex-1 overflow-hidden">
-          <FilterBar filters={filters} onChange={setFilters} tables={tables} />
+          <FilterBar filters={filters} onChange={setFilters} databases={databases} tables={tables} />
           <EventTable events={filtered} selected={selected} onSelect={setSelected} />
         </div>
         {selected && (

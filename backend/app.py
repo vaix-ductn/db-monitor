@@ -16,6 +16,16 @@ app.add_middleware(
 )
 
 
+@app.get("/schema")
+async def get_schema():
+    r = aioredis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+    data = await r.get("db_schema")
+    await r.aclose()
+    if data:
+        return json.loads(data)
+    return {}
+
+
 @app.get("/events")
 async def get_events():
     r = aioredis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
