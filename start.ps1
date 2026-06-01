@@ -78,7 +78,7 @@ Write-Host @"
  CDC Monitor — Running
 ================================================
  Dashboard:  http://localhost:3001
- API:        http://localhost:8099/events
+ API:        http://localhost:3001/events
 
  After running Django migrations, any INSERT/UPDATE/DELETE
  on the 'andes_cloud' database will appear on the dashboard.

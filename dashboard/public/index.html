@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Monitor — CDC Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // OP badge styles (ported from EventTable.tsx)
+    const OP_BADGE = {
+      c: { label: 'INSERT',   cls: 'bg-green-900 text-green-300' },
+      u: { label: 'UPDATE',   cls: 'bg-yellow-900 text-yellow-300' },
+      d: { label: 'DELETE',   cls: 'bg-red-900 text-red-300' },
+      r: { label: 'SNAPSHOT', cls: 'bg-gray-700 text-gray-300' },
+    }
+    const MAX_INLINE = 3
+
+    function dashboard() {
+      return {
+        events: [],
+        schema: {},
+        selected: null,
+        detailMode: 'collapse',  // 'collapse' | 'full'
+        filters: { operation: '', database: '', table: '', keyword: '' },
+        ws: null,
+        retryDelay: 1000,
+        unmounted: false,
+
+        init() {
+          this.loadSchema()
+          this.loadEvents()
+          this.connectWS()
+          // refresh schema periodically (reader updates it every 60s)
+          setInterval(() => this.loadSchema(), 60000)
+        },
+
+        async loadSchema() {
+          try { this.schema = await (await fetch('/schema')).json() } catch (e) { /* ignore */ }
+        },
+
+        async loadEvents() {
+          try {
+            const data = await (await fetch('/events')).json()
+            this.events = Array.isArray(data) ? data.slice(0, 500) : []
+          } catch (e) { /* ignore */ }
+        },
+
+        connectWS() {
+          const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+          this.ws = new WebSocket(`${proto}://${location.host}/ws`)
+          this.ws.onopen = () => { this.retryDelay = 1000 }
+          this.ws.onmessage = (e) => {
+            try {
+              const ev = JSON.parse(e.data)
+              this.events = [ev, ...this.events].slice(0, 500)
+            } catch (_) { /* ignore malformed */ }
+          }
+          this.ws.onclose = () => {
+            if (this.unmounted) return
+            setTimeout(() => {
+              this.retryDelay = Math.min(this.retryDelay * 2, 30000)
+              this.connectWS()
+            }, this.retryDelay)
+          }
+        },
+
+        // ---- derived data ----
+        get databases() {
+          return Object.keys(this.schema).sort()
+        },
+
+        get tables() {
+          if (this.filters.database && this.schema[this.filters.database]) {
+            return this.schema[this.filters.database]
+          }
+          const fromSchema = Object.values(this.schema).flat()
+          if (fromSchema.length > 0) return [...new Set(fromSchema)].sort()
+          return [...new Set(this.events.map(e => e.table))].sort()
+        },
+
+        get filtered() {
+          return this.events.filter(e => {
+            if (this.filters.database && e.database !== this.filters.database) return false
+            if (this.filters.operation && e.operation !== this.filters.operation) return false
+            if (this.filters.table && e.table !== this.filters.table) return false
+            if (this.filters.keyword) {
+              const kw = this.filters.keyword.toLowerCase()
+              if (!JSON.stringify(e).toLowerCase().includes(kw)) return false
+            }
+            return true
+          })
+        },
+
+        get view() {
+          return this.filtered.map((e) => ({
+            e,
+            badge: OP_BADGE[e.operation] || { label: e.operation, cls: 'bg-gray-700 text-gray-300' },
+            count: this.changedFieldCount(e),
+            inline: this.inline(e),
+          }))
+        },
+
+        // ---- helpers (ported from EventTable.tsx / DiffViewer.tsx) ----
+        j(v) { return JSON.stringify(v) },
+
+        changedFieldCount(e) {
+          if (e.before && e.after) {
+            return Object.keys(e.after).filter(
+              k => JSON.stringify(e.before[k]) !== JSON.stringify(e.after[k])
+            ).length
+          }
+          if (e.after) return Object.keys(e.after).length
+          if (e.before) return Object.keys(e.before).length
+          return 0
+        },
+
+        inline(e) {
+          // UPDATE — changed fields as old → new
+          if (e.operation === 'u' && e.before && e.after) {
+            const changed = Object.keys(e.after).filter(
+              k => JSON.stringify(e.before[k]) !== JSON.stringify(e.after[k])
+            )
+            const shown = changed.slice(0, MAX_INLINE)
+            return {
+              mode: shown.length ? 'update' : 'nochange',
+              items: shown.map(k => ({ k, before: JSON.stringify(e.before[k]), after: JSON.stringify(e.after[k]) })),
+              more: changed.length - shown.length,
+            }
+          }
+          // INSERT — after values (green)
+          if (e.operation === 'c' && e.after) {
+            const keys = Object.keys(e.after)
+            const shown = keys.slice(0, MAX_INLINE)
+            return { mode: 'insert', items: shown.map(k => ({ k, val: JSON.stringify(e.after[k]) })), more: keys.length - shown.length }
+          }
+          // DELETE — before values (red)
+          if (e.operation === 'd' && e.before) {
+            const keys = Object.keys(e.before)
+            const shown = keys.slice(0, MAX_INLINE)
+            return { mode: 'delete', items: shown.map(k => ({ k, val: JSON.stringify(e.before[k]) })), more: keys.length - shown.length }
+          }
+          // SNAPSHOT — field count
+          if (e.operation === 'r' && e.after) {
+            return { mode: 'snapshot', count: Object.keys(e.after).length }
+          }
+          return { mode: 'empty' }
+        },
+
+        diff(e) {
+          if (!e || !e.before || !e.after) return []
+          const keys = [...new Set([...Object.keys(e.before), ...Object.keys(e.after)])]
+          return keys
+            .filter(k => JSON.stringify(e.before[k]) !== JSON.stringify(e.after[k]))
+            .map(k => ({ k, before: JSON.stringify(e.before[k]), after: JSON.stringify(e.after[k]) }))
+        },
+
+        pretty(obj) { return JSON.stringify(obj, null, 2) },
+
+        // Format ISO timestamp -> "yyyy/MM/dd HH:mm:ss"
+        fmtTime(ts) {
+          if (!ts) return ''
+          const m = String(ts).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/)
+          return m ? `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}` : ts
+        },
+
+        clearScreen() { this.events = []; this.selected = null },
+
+        onDatabaseChange() { this.filters.table = '' },
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100">
+  <div x-data="dashboard()" class="min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 shrink-0">
+      <h1 class="text-xl font-bold text-white">DB Monitor — CDC Dashboard</h1>
+      <p class="text-xs text-gray-400 mt-1"><span x-text="events.length"></span> total events captured</p>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+      <div class="flex flex-col flex-1 overflow-hidden">
+
+        <!-- Filter bar -->
+        <div class="flex gap-3 px-4 py-2 bg-gray-900 border-b border-gray-800 flex-wrap shrink-0">
+          <select class="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700"
+                  x-model="filters.operation">
+            <option value="">All Operations</option>
+            <option value="c">INSERT</option>
+            <option value="u">UPDATE</option>
+            <option value="d">DELETE</option>
+            <option value="r">SNAPSHOT</option>
+          </select>
+
+          <select class="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700"
+                  x-model="filters.database" @change="onDatabaseChange()">
+            <option value="">All Databases</option>
+            <template x-for="db in databases" :key="db">
+              <option :value="db" x-text="db"></option>
+            </template>
+          </select>
+
+          <select class="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700"
+                  x-model="filters.table">
+            <option value="">All Tables</option>
+            <template x-for="t in tables" :key="t">
+              <option :value="t" x-text="t"></option>
+            </template>
+          </select>
+
+          <div class="flex items-center gap-2 text-xs text-gray-300">
+            <span class="text-gray-400">Detail:</span>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" value="collapse" x-model="detailMode" class="accent-blue-500" /> Collapse
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" value="full" x-model="detailMode" class="accent-blue-500" /> Full
+            </label>
+          </div>
+
+          <input type="text" placeholder="Search keyword..."
+                 class="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700 flex-1 min-w-40"
+                 x-model="filters.keyword" />
+
+          <button @click="clearScreen()"
+                  class="bg-gray-800 hover:bg-red-900 text-gray-200 hover:text-red-200 text-sm rounded px-3 py-1 border border-gray-700 whitespace-nowrap transition-colors">
+            Clear
+          </button>
+        </div>
+
+        <!-- Event table -->
+        <div class="flex-1 overflow-auto">
+          <table class="w-full text-sm">
+            <thead class="sticky top-0 bg-gray-900 text-gray-400 text-xs uppercase z-10">
+              <tr>
+                <th class="px-4 py-2 text-left whitespace-nowrap w-44">Timestamp</th>
+                <th class="px-4 py-2 text-left w-32">Table</th>
+                <th class="px-4 py-2 text-left w-28">Operation</th>
+                <th class="px-4 py-2 text-left w-16">Fields</th>
+                <th class="px-4 py-2 text-left">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(row, i) in view" :key="i">
+                <tr class="border-b border-gray-800 cursor-pointer hover:bg-gray-800 transition-colors align-top"
+                    :class="selected === row.e ? 'bg-gray-800' : ''"
+                    @click="selected = row.e">
+                  <td class="px-4 py-2.5 text-gray-400 whitespace-nowrap text-xs" x-text="fmtTime(row.e.timestamp)"></td>
+                  <td class="px-4 py-2.5 font-mono text-sm" x-text="row.e.table"></td>
+                  <td class="px-4 py-2.5">
+                    <span class="px-2 py-0.5 rounded text-xs font-bold" :class="row.badge.cls" x-text="row.badge.label"></span>
+                  </td>
+                  <td class="px-4 py-2.5 text-gray-400" x-text="row.count"></td>
+                  <td class="px-4 py-2.5">
+                    <!-- ============ COLLAPSE MODE (changed data only) ============ -->
+                    <template x-if="detailMode === 'collapse'">
+                      <div>
+                        <!-- UPDATE -->
+                        <template x-if="row.inline.mode === 'update'">
+                          <div class="space-y-0.5">
+                            <template x-for="it in row.inline.items" :key="it.k">
+                              <div class="text-xs font-mono flex gap-1 items-baseline flex-wrap">
+                                <span class="text-gray-400 shrink-0" x-text="it.k + ':'"></span>
+                                <span class="text-red-400 line-through break-all" x-text="it.before"></span>
+                                <span class="text-gray-500 shrink-0">→</span>
+                                <span class="text-green-400 break-all" x-text="it.after"></span>
+                              </div>
+                            </template>
+                            <div class="text-xs text-gray-500" x-show="row.inline.more > 0"
+                                 x-text="'+' + row.inline.more + ' more field' + (row.inline.more > 1 ? 's' : '')"></div>
+                          </div>
+                        </template>
+                        <!-- INSERT / DELETE -->
+                        <template x-if="row.inline.mode === 'insert' || row.inline.mode === 'delete'">
+                          <div class="space-y-0.5">
+                            <template x-for="it in row.inline.items" :key="it.k">
+                              <div class="text-xs font-mono flex gap-1 flex-wrap">
+                                <span class="text-gray-400 shrink-0" x-text="it.k + ':'"></span>
+                                <span class="break-all" :class="row.inline.mode === 'insert' ? 'text-green-400' : 'text-red-400'" x-text="it.val"></span>
+                              </div>
+                            </template>
+                            <div class="text-xs text-gray-500" x-show="row.inline.more > 0"
+                                 x-text="'+' + row.inline.more + ' more field' + (row.inline.more > 1 ? 's' : '')"></div>
+                          </div>
+                        </template>
+                        <!-- SNAPSHOT -->
+                        <template x-if="row.inline.mode === 'snapshot'">
+                          <span class="text-xs text-gray-500" x-text="row.inline.count + ' fields'"></span>
+                        </template>
+                        <!-- no changes -->
+                        <template x-if="row.inline.mode === 'nochange'">
+                          <span class="text-gray-600 text-xs">no field changes</span>
+                        </template>
+                        <!-- empty -->
+                        <template x-if="row.inline.mode === 'empty'">
+                          <span class="text-gray-600 text-xs">—</span>
+                        </template>
+                      </div>
+                    </template>
+
+                    <!-- ============ FULL MODE (data sections, like detail panel) ============ -->
+                    <template x-if="detailMode === 'full'">
+                      <div class="space-y-2 text-xs max-w-2xl">
+                        <!-- CHANGES (update only) -->
+                        <template x-if="row.e.operation === 'u' && row.e.before && row.e.after">
+                          <div>
+                            <div class="text-gray-400 uppercase font-semibold mb-1">Changes</div>
+                            <template x-if="diff(row.e).length === 0">
+                              <div class="text-gray-500">No field changes detected</div>
+                            </template>
+                            <div class="space-y-1">
+                              <template x-for="d in diff(row.e)" :key="d.k">
+                                <div class="font-mono bg-gray-800 rounded p-2 break-all">
+                                  <span class="text-gray-400" x-text="d.k + ':'"></span>
+                                  <span class="text-red-400 line-through" x-text="d.before"></span>
+                                  <span> → </span>
+                                  <span class="text-green-400" x-text="d.after"></span>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                        <!-- AFTER -->
+                        <template x-if="row.e.after">
+                          <div>
+                            <div class="text-gray-400 uppercase font-semibold mb-1">After</div>
+                            <pre class="bg-gray-800 rounded p-2 overflow-auto whitespace-pre-wrap font-mono" x-text="pretty(row.e.after)"></pre>
+                          </div>
+                        </template>
+                        <!-- BEFORE -->
+                        <template x-if="row.e.before">
+                          <div>
+                            <div class="text-gray-400 uppercase font-semibold mb-1">Before</div>
+                            <pre class="bg-gray-800 rounded p-2 overflow-auto whitespace-pre-wrap font-mono" x-text="pretty(row.e.before)"></pre>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+
+              <tr x-show="view.length === 0">
+                <td colspan="5" class="px-4 py-12 text-center text-gray-500">
+                  No events yet — waiting for CDC data...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Detail panel -->
+      <div x-show="selected" class="w-96 border-l border-gray-800 bg-gray-900 flex flex-col overflow-hidden shrink-0">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <h2 class="text-sm font-bold">Event Detail</h2>
+          <button @click="selected = null" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <div class="flex-1 overflow-auto p-4 text-sm space-y-3" x-show="selected">
+          <template x-if="selected">
+            <div class="space-y-3">
+              <div x-show="selected.database">
+                <span class="text-gray-400">Database: </span><span class="font-mono" x-text="selected.database"></span>
+              </div>
+              <div><span class="text-gray-400">Table: </span><span class="font-mono" x-text="selected.table"></span></div>
+              <div><span class="text-gray-400">Operation: </span><span class="font-mono" x-text="selected.operation"></span></div>
+              <div><span class="text-gray-400">Timestamp: </span><span class="text-xs" x-text="fmtTime(selected.timestamp)"></span></div>
+
+              <!-- Changes (UPDATE) -->
+              <template x-if="selected.operation === 'u' && selected.before && selected.after">
+                <div>
+                  <div class="text-gray-400 text-xs uppercase font-semibold pt-2 pb-1">Changes</div>
+                  <template x-if="diff(selected).length === 0">
+                    <div class="text-gray-500 text-xs">No field changes detected</div>
+                  </template>
+                  <div class="space-y-1">
+                    <template x-for="d in diff(selected)" :key="d.k">
+                      <div class="text-xs font-mono bg-gray-800 rounded p-2">
+                        <span class="text-gray-400" x-text="d.k + ':'"></span>
+                        <span class="text-red-400 line-through" x-text="d.before"></span>
+                        <span> → </span>
+                        <span class="text-green-400" x-text="d.after"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- After -->
+              <template x-if="selected.after">
+                <div>
+                  <div class="text-gray-400 text-xs uppercase font-semibold pt-2 pb-1">After</div>
+                  <pre class="bg-gray-800 rounded p-2 text-xs overflow-auto whitespace-pre-wrap" x-text="pretty(selected.after)"></pre>
+                </div>
+              </template>
+
+              <!-- Before -->
+              <template x-if="selected.before">
+                <div>
+                  <div class="text-gray-400 text-xs uppercase font-semibold pt-2 pb-1">Before</div>
+                  <pre class="bg-gray-800 rounded p-2 text-xs overflow-auto whitespace-pre-wrap" x-text="pretty(selected.before)"></pre>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

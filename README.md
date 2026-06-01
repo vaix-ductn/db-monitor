@@ -11,20 +11,22 @@ Monitors all INSERT / UPDATE / DELETE events in real-time and displays them on a
 MySQL binlog
     │
     ▼
-┌─────────────┐     Redis Pub/Sub     ┌──────────────┐     WebSocket     ┌──────────────┐
-│  cdc-reader │ ──────────────────▶  │  cdc-backend │ ────────────────▶ │ cdc-frontend │
-│  (Python)   │                      │  (FastAPI)   │                   │  (React)     │
-└─────────────┘                      └──────────────┘                   └──────────────┘
+┌─────────────┐     Redis Pub/Sub     ┌───────────────────────────────┐
+│  cdc-reader │ ──────────────────▶  │         cdc-dashboard         │
+│  (Python)   │                      │  Express + ws + Alpine.js     │
+└─────────────┘                      │  (API + WebSocket + UI :3001) │
+                                     └───────────────────────────────┘
 ```
 
 | Service | Role | Technology |
 |---|---|---|
 | `cdc-reader` | Reads MySQL binary log, publishes events to Redis | Python + pymysqlreplication |
 | `cdc-redis` | Event message broker | Redis 7 |
-| `cdc-backend` | WebSocket API server, serves events to frontend | FastAPI |
-| `cdc-frontend` | Real-time dashboard UI | React 18 + Vite + Tailwind CSS |
+| `cdc-dashboard` | REST API + WebSocket + dashboard UI, all on one port | Node.js (Express + ws + ioredis) + Alpine.js |
 
-**RAM footprint: ~115 MB** (replaces Debezium + Kafka + Zookeeper stack which requires ~1.5 GB)
+**RAM footprint: ~75 MB** (replaces Debezium + Kafka + Zookeeper stack which requires ~1.5 GB).
+The dashboard uses a single Node.js service with no build step and no nginx — the UI is a
+static Alpine.js page served directly by Express.
 
 ---
 
@@ -49,8 +51,7 @@ your-project/
 │   ├── start.ps1
 │   ├── stop.ps1
 │   ├── reader/
-│   ├── backend/
-│   └── frontend/
+│   └── dashboard/
 └── ...
 ```
 
@@ -139,10 +140,13 @@ The `cdc-reader` service reads these environment variables (set in `docker-compo
 
 ## Ports
 
-| Service | Port | URL |
+All served by the single `cdc-dashboard` service on one port:
+
+| What | Port | URL |
 |---|---|---|
-| Dashboard (frontend) | `3001` | http://localhost:3001 |
-| API (backend) | `8099` | http://localhost:8099/events |
+| Dashboard UI | `3001` | http://localhost:3001 |
+| REST API | `3001` | http://localhost:3001/events · http://localhost:3001/schema |
+| WebSocket | `3001` | ws://localhost:3001/ws |
 
 ---
 
@@ -172,11 +176,12 @@ db:
 
 ### Dashboard shows no events
 
-Check `cdc-reader` status:
+Check `cdc-reader` and `cdc-dashboard` status:
 
 ```powershell
-docker ps --filter name=cdc-reader
+docker ps --filter name=cdc
 docker logs cdc-reader --tail 30
+docker logs cdc-dashboard --tail 30
 ```
 
 Common causes:
@@ -187,6 +192,7 @@ Common causes:
 | `Access denied; REPLICATION CLIENT privilege` | Grants not applied | Re-run `.\monitor\start.ps1` |
 | `Access denied; SUPER privilege` | Missing `SYSTEM_VARIABLES_ADMIN` | Re-run `.\monitor\start.ps1` |
 | `cdc-reader` keeps restarting | MySQL not ready yet | Wait 30s and check logs again |
+| Dashboard loads but no events / WebSocket fails | `cdc-dashboard` can't reach Redis | Check `docker logs cdc-dashboard` for the Redis connection line |
 
 ### Force rebuild all monitor images
 
@@ -201,29 +207,17 @@ docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml up -
 
 ```
 monitor/
-├── docker-compose.monitor.yml   # Compose overlay (adds binlog to db, adds 4 monitor services)
+├── docker-compose.monitor.yml   # Compose overlay (adds binlog to db, adds monitor services)
 ├── start.ps1                    # Start script with auto MySQL grant
 ├── stop.ps1                     # Stop monitor services only
 ├── reader/
 │   ├── reader.py                # Binlog reader — publishes CDC events to Redis
 │   ├── requirements.txt
 │   └── Dockerfile
-├── backend/
-│   ├── app.py                   # FastAPI WebSocket server
-│   ├── requirements.txt
-│   └── Dockerfile
-└── frontend/
-    ├── src/
-    │   ├── App.tsx
-    │   ├── components/
-    │   │   ├── EventTable.tsx   # Main event list with inline diff column
-    │   │   ├── EventDetail.tsx  # Side panel with full before/after JSON
-    │   │   ├── DiffViewer.tsx   # Field-level diff renderer
-    │   │   └── FilterBar.tsx    # Operation / table / keyword filters
-    │   └── hooks/
-    │       ├── useEvents.ts     # Event state + filtering logic
-    │       └── useWebSocket.ts  # WebSocket connection to backend
+└── dashboard/                   # Single Node.js service (API + WebSocket + UI)
+    ├── server.js                # Express + ws + ioredis: /events, /schema, /ws
     ├── package.json
-    ├── vite.config.ts
-    └── Dockerfile
+    ├── Dockerfile
+    └── public/
+        └── index.html           # Alpine.js dashboard (table, inline diff, filters, detail panel)
 ```

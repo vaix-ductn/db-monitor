@@ -5,7 +5,7 @@
 #   docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml up -d
 #
 # Stop monitor only:
-#   docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml stop cdc-reader cdc-redis cdc-backend cdc-frontend
+#   docker compose -f docker-compose.yaml -f monitor/docker-compose.monitor.yml stop cdc-reader cdc-redis cdc-dashboard
 
 services:
 
@@ -17,6 +17,7 @@ services:
       - --log-bin=mysql-bin
       - --binlog-format=ROW
       - --binlog-row-image=FULL
+      - --binlog-row-metadata=FULL
     volumes:
       - mysql_monitor_data:/var/lib/mysql
 
@@ -47,30 +48,19 @@ services:
       - monitor-net
     restart: always
 
-  cdc-backend:
+  # Node.js dashboard — serves UI + REST API + WebSocket on one port (3001)
+  # Replaces the previous Python FastAPI backend + React/nginx frontend
+  cdc-dashboard:
     build:
-      context: ./monitor/backend
-    container_name: cdc-backend
+      context: ./monitor/dashboard
+    container_name: cdc-dashboard
     depends_on:
       - cdc-redis
     ports:
-      - "8099:8000"
+      - "3001:3001"
     environment:
       REDIS_HOST: cdc-redis
-    networks:
-      - monitor-net
-    restart: always
-
-  cdc-frontend:
-    build:
-      context: ./monitor/frontend
-      args:
-        VITE_API_PORT: 8099
-    container_name: cdc-frontend
-    depends_on:
-      - cdc-backend
-    ports:
-      - "3001:80"
+      PORT: 3001
     networks:
       - monitor-net
     restart: always

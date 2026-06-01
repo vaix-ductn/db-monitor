@@ -7,7 +7,7 @@ $MainCompose = "$ProjectRoot\docker-compose.yaml"
 
 Write-Host "`nStopping monitor services (db and main app keep running)..." -ForegroundColor Cyan
 
-docker compose -f $MainCompose -f $MonitorCompose stop cdc-reader cdc-redis cdc-backend cdc-frontend
-docker compose -f $MainCompose -f $MonitorCompose rm -f cdc-reader cdc-redis cdc-backend cdc-frontend
+docker compose -f $MainCompose -f $MonitorCompose stop cdc-reader cdc-redis cdc-dashboard
+docker compose -f $MainCompose -f $MonitorCompose rm -f cdc-reader cdc-redis cdc-dashboard
 
 Write-Host "Monitor services stopped. Run .\monitor\start.ps1 to restart." -ForegroundColor Green
