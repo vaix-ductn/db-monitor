@@ -54,19 +54,25 @@ if (-not $ready) {
     Write-Host "  MySQL is ready." -ForegroundColor Green
 }
 
-# Grant privileges required by cdc-reader to read the binlog
+# Grant privileges required by cdc-reader to read the binlog (retry up to 3 times)
 $grantSQL = "GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '${DB_USER}'@'%'; GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;"
-docker exec $DB_CONTAINER mysql -u root -p$DB_ROOT_PASS -e $grantSQL 2>&1 | Where-Object { $_ -notmatch "Warning" }
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  CDC grants applied successfully." -ForegroundColor Green
-} else {
-    Write-Host "  WARNING: Grant failed — check DB_ROOT_PASS in start.ps1." -ForegroundColor Red
+$granted = $false
+for ($g = 0; $g -lt 3; $g++) {
+    docker exec $DB_CONTAINER mysql -u root -p$DB_ROOT_PASS -e $grantSQL 2>&1 | Where-Object { $_ -notmatch "Warning" }
+    if ($LASTEXITCODE -eq 0) { $granted = $true; break }
+    Write-Host "  Grant attempt $($g+1) failed, retrying in 5s..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 5
 }
 
-# Restart cdc-reader so it picks up the new grants
+if ($granted) {
+    Write-Host "  CDC grants applied successfully." -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: Grant failed after 3 attempts — check DB_ROOT_PASS in start.ps1." -ForegroundColor Red
+}
+
+# Force restart cdc-reader so it picks up the new grants with a fresh connection
 Write-Host "  Restarting cdc-reader..." -ForegroundColor Yellow
-docker compose -f $MainCompose -f $MonitorCompose restart cdc-reader 2>&1 | Where-Object { $_ -notmatch "Warning" }
+docker restart cdc-reader 2>&1 | Out-Null
 Write-Host "  cdc-reader restarted." -ForegroundColor Green
 
 Write-Host "`n[3/3] Container status:" -ForegroundColor Cyan
