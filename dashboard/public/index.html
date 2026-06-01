@@ -73,8 +73,13 @@
         },
         toggleRow(id) {
           const next = this.rowMode(id) === 'collapse' ? 'full' : 'collapse'
-          this.rowOverrides[id] = next
-          if (next === 'collapse') delete this.expandedSections[id]
+          // spread to guarantee Alpine detects the change
+          this.rowOverrides = { ...this.rowOverrides, [id]: next }
+          if (next === 'collapse') {
+            const s = { ...this.expandedSections }
+            delete s[id]
+            this.expandedSections = s
+          }
         },
 
         // ---- accordion sections (After / Before inside Full mode) ----
@@ -112,11 +117,15 @@
         },
 
         get view() {
+          // Access rowOverrides and detailMode here so this getter re-runs when either changes
+          const overrides = this.rowOverrides
+          const globalMode = this.detailMode
           return this.filtered.map(e => ({
             e,
             badge: OP_BADGE[e.operation] || { label: e.operation, cls: 'bg-gray-700 text-gray-300' },
             count: this.changedFieldCount(e),
             inline: this.inline(e),
+            mode: overrides[e._id] ?? globalMode,
           }))
         },
 
@@ -245,7 +254,7 @@
         <tbody>
           <template x-for="row in view" :key="row.e._id">
             <tr class="border-b border-gray-800 cursor-pointer hover:bg-gray-800/60 transition-colors align-top"
-                :class="rowMode(row.e._id) === 'full' ? 'bg-gray-800/40' : ''"
+                :class="row.mode === 'full' ? 'bg-gray-800/40' : ''"
                 @click="toggleRow(row.e._id)">
               <td class="px-4 py-2.5 text-gray-400 whitespace-nowrap text-xs" x-text="fmtTime(row.e.timestamp)"></td>
               <td class="px-4 py-2.5 font-mono text-sm" x-text="row.e.table"></td>
@@ -257,7 +266,7 @@
               <td class="px-4 py-2.5">
 
                 <!-- ===== COLLAPSE MODE ===== -->
-                <template x-if="rowMode(row.e._id) === 'collapse'">
+                <template x-if="row.mode === 'collapse'">
                   <div>
                     <template x-if="row.inline.mode === 'update'">
                       <div class="space-y-0.5">
@@ -300,7 +309,7 @@
                 </template>
 
                 <!-- ===== FULL MODE ===== -->
-                <template x-if="rowMode(row.e._id) === 'full'">
+                <template x-if="row.mode === 'full'">
                   <div class="space-y-1 text-xs max-w-2xl">
 
                     <!-- CHANGES — always visible for UPDATE -->
