@@ -18,7 +18,7 @@
       return {
         events: [],
         schema: {},
-        detailMode: 'collapse',       // global default: 'collapse' | 'full'
+        detailMode: 'full',           // global default: 'full' | 'collapse'
         rowOverrides: {},             // { [event._id]: 'collapse' | 'full' }
         expandedSections: {},         // { [event._id]: { after: bool, before: bool } }
         _nextId: 0,
@@ -82,7 +82,7 @@
           }
         },
 
-        // ---- accordion sections (After / Before inside Full mode) ----
+        // ---- accordion sections (After / Before inside Full mode for UPDATE) ----
         toggleSection(id, section) {
           if (!this.expandedSections[id]) this.expandedSections[id] = { after: false, before: false }
           this.expandedSections[id][section] = !this.expandedSections[id][section]
@@ -125,6 +125,7 @@
             badge: OP_BADGE[e.operation] || { label: e.operation, cls: 'bg-gray-700 text-gray-300' },
             count: this.changedFieldCount(e),
             inline: this.inline(e),
+            inlineFull: this.inlineFull(e),
             mode: overrides[e._id] ?? globalMode,
           }))
         },
@@ -138,6 +139,7 @@
           return 0
         },
 
+        // Truncated inline for collapse mode (up to MAX_INLINE fields)
         inline(e) {
           if (e.operation === 'u' && e.before && e.after) {
             const changed = Object.keys(e.after).filter(k => JSON.stringify(e.before[k]) !== JSON.stringify(e.after[k]))
@@ -158,6 +160,19 @@
           }
           if (e.operation === 'r' && e.after) return { mode: 'snapshot', count: Object.keys(e.after).length }
           return { mode: 'empty' }
+        },
+
+        // All fields inline for full mode INSERT/DELETE (no truncation)
+        inlineFull(e) {
+          if (e.operation === 'c' && e.after) {
+            const keys = Object.keys(e.after)
+            return { mode: 'insert', items: keys.map(k => ({ k, val: JSON.stringify(e.after[k]) })) }
+          }
+          if (e.operation === 'd' && e.before) {
+            const keys = Object.keys(e.before)
+            return { mode: 'delete', items: keys.map(k => ({ k, val: JSON.stringify(e.before[k]) })) }
+          }
+          return { mode: 'empty', items: [] }
         },
 
         diff(e) {
@@ -222,10 +237,10 @@
       <div class="flex items-center gap-2 text-xs text-gray-300">
         <span class="text-gray-400">Detail:</span>
         <label class="flex items-center gap-1 cursor-pointer">
-          <input type="radio" value="collapse" x-model="detailMode" class="accent-blue-500" /> Collapse
+          <input type="radio" value="full" x-model="detailMode" class="accent-blue-500" /> Full
         </label>
         <label class="flex items-center gap-1 cursor-pointer">
-          <input type="radio" value="full" x-model="detailMode" class="accent-blue-500" /> Full
+          <input type="radio" value="collapse" x-model="detailMode" class="accent-blue-500" /> Collapse
         </label>
       </div>
 
@@ -288,7 +303,7 @@
                           <div class="text-xs font-mono flex gap-1 flex-wrap">
                             <span class="text-gray-400 shrink-0" x-text="it.k + ':'"></span>
                             <span class="break-all"
-                                  :class="row.inline.mode === 'insert' ? 'text-green-400' : 'text-red-400'"
+                                  :class="row.inline.mode === 'insert' ? 'text-green-400' : 'text-red-400 line-through'"
                                   x-text="it.val"></span>
                           </div>
                         </template>
@@ -312,7 +327,7 @@
                 <template x-if="row.mode === 'full'">
                   <div class="space-y-1 text-xs max-w-2xl">
 
-                    <!-- CHANGES — always visible for UPDATE -->
+                    <!-- UPDATE: Changes section -->
                     <template x-if="row.e.operation === 'u' && row.e.before && row.e.after">
                       <div class="mb-2">
                         <div class="text-gray-400 uppercase font-semibold mb-1">Changes</div>
@@ -332,8 +347,8 @@
                       </div>
                     </template>
 
-                    <!-- AFTER — accordion toggle -->
-                    <template x-if="row.e.after">
+                    <!-- UPDATE: After accordion -->
+                    <template x-if="row.e.operation === 'u' && row.e.after">
                       <div>
                         <button class="flex items-center gap-1.5 text-gray-400 hover:text-gray-100 uppercase font-semibold py-0.5 w-full text-left transition-colors"
                                 @click.stop="toggleSection(row.e._id, 'after')">
@@ -346,8 +361,8 @@
                       </div>
                     </template>
 
-                    <!-- BEFORE — accordion toggle -->
-                    <template x-if="row.e.before">
+                    <!-- UPDATE: Before accordion -->
+                    <template x-if="row.e.operation === 'u' && row.e.before">
                       <div>
                         <button class="flex items-center gap-1.5 text-gray-400 hover:text-gray-100 uppercase font-semibold py-0.5 w-full text-left transition-colors"
                                 @click.stop="toggleSection(row.e._id, 'before')">
@@ -358,6 +373,35 @@
                              class="bg-gray-800 rounded p-2 overflow-auto whitespace-pre-wrap font-mono mt-1"
                              x-text="pretty(row.e.before)"></pre>
                       </div>
+                    </template>
+
+                    <!-- INSERT: all fields inline (green, no truncation) -->
+                    <template x-if="row.e.operation === 'c'">
+                      <div class="space-y-0.5">
+                        <template x-for="it in row.inlineFull.items" :key="it.k">
+                          <div class="text-xs font-mono flex gap-1 flex-wrap">
+                            <span class="text-gray-400 shrink-0" x-text="it.k + ':'"></span>
+                            <span class="text-green-400 break-all" x-text="it.val"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+
+                    <!-- DELETE: all fields inline with strikethrough (red) -->
+                    <template x-if="row.e.operation === 'd'">
+                      <div class="space-y-0.5">
+                        <template x-for="it in row.inlineFull.items" :key="it.k">
+                          <div class="text-xs font-mono flex gap-1 flex-wrap">
+                            <span class="text-gray-400 shrink-0" x-text="it.k + ':'"></span>
+                            <span class="text-red-400 line-through break-all" x-text="it.val"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+
+                    <!-- SNAPSHOT: field count -->
+                    <template x-if="row.e.operation === 'r'">
+                      <span class="text-xs text-gray-500" x-text="row.inline.count + ' fields'"></span>
                     </template>
 
                   </div>
