@@ -11,17 +11,17 @@ Monitors all INSERT / UPDATE / DELETE events in real-time and displays them on a
 MySQL binlog
     │
     ▼
-┌─────────────┐     Redis Pub/Sub     ┌───────────────────────────────┐
-│  cdc-reader │ ──────────────────▶  │         cdc-dashboard         │
-│  (Python)   │                      │  Express + ws + Alpine.js     │
-└─────────────┘                      │  (API + WebSocket + UI :3001) │
-                                     └───────────────────────────────┘
+┌─────────────┐    Redis Pub/Sub    ┌─────────────┐    WebSocket / REST    ┌───────────────────────────────┐
+│  cdc-reader │ ─────────────────▶ │  cdc-redis  │ ──────────────────────▶│         cdc-dashboard         │
+│  (Python)   │                    │  (broker)   │                        │  Express + ws + Alpine.js     │
+└─────────────┘                    └─────────────┘                        │  (API + WebSocket + UI :3001) │
+                                                                          └───────────────────────────────┘
 ```
 
 | Service | Role | Technology |
 |---|---|---|
 | `cdc-reader` | Reads MySQL binary log, publishes events to Redis | Python + pymysqlreplication |
-| `cdc-redis` | Event message broker | Redis 7 |
+| `cdc-redis` | Event message broker — stores history + real-time push | Redis 7 |
 | `cdc-dashboard` | REST API + WebSocket + dashboard UI, all on one port | Node.js (Express + ws + ioredis) + Alpine.js |
 
 **RAM footprint: ~75 MB** (replaces Debezium + Kafka + Zookeeper stack which requires ~1.5 GB).
@@ -86,22 +86,31 @@ http://localhost:3001
 
 ## Dashboard
 
-![Dashboard](https://raw.githubusercontent.com/vaix-ductn/db-monitor/main/docs/dashboard-preview.png)
-
 | Column | Description |
 |---|---|
-| Timestamp | UTC time when the event was captured |
+| Timestamp | Time when the event was captured (`yyyy/MM/dd HH:mm:ss`) |
 | Table | Database table affected |
 | Operation | `INSERT` / `UPDATE` / `DELETE` / `SNAPSHOT` |
-| Fields | Number of fields in the record |
-| Detail | Inline diff — shows changed field values directly in the row |
+| Fields | Number of fields changed |
+| Detail | Inline view of changed field values |
 
 **Filtering:**
 - Filter by operation type (INSERT / UPDATE / DELETE / SNAPSHOT)
-- Filter by table name (populated dynamically from live events)
+- Filter by database (populated from live schema)
+- Filter by table (populated from live schema, scoped to selected database)
 - Keyword search across all fields
 
-**Event detail panel:** Click any row to open a side panel with the full before/after JSON and a structured diff view.
+**Detail modes:**
+- **Full** (default) — shows all field values inline; UPDATE also shows Changes diff + Before/After JSON accordion
+- **Collapse** — shows up to 3 fields inline with a "+N more" indicator
+- Click any row to toggle that row's mode individually
+
+**Visual cues:**
+- `INSERT` fields shown in green
+- `UPDATE` changed fields shown as `before → after` with strikethrough on old value
+- `DELETE` fields shown in red with strikethrough to indicate removed data
+
+**Clear button:** Clears the screen without stopping the monitor (new events keep streaming in).
 
 ---
 
@@ -133,7 +142,7 @@ The `cdc-reader` service reads these environment variables (set in `docker-compo
 | `MYSQL_PORT` | `3306` | MySQL port |
 | `MYSQL_USER` | `dbuser` | MySQL user |
 | `MYSQL_PASSWORD` | `dbpassword` | MySQL password |
-| `MYSQL_DATABASE` | `myapp` | Database to monitor (all tables) |
+| `MYSQL_DATABASE` | `myapp` | Used for connection only — all databases are monitored |
 | `REDIS_HOST` | `cdc-redis` | Redis service name |
 
 ---
@@ -168,6 +177,7 @@ db:
     - --log-bin=mysql-bin
     - --binlog-format=ROW
     - --binlog-row-image=FULL
+    - --binlog-row-metadata=FULL   # enables real column names (not UNKNOWN_COLx)
 ```
 
 ---
@@ -193,6 +203,7 @@ Common causes:
 | `Access denied; SUPER privilege` | Missing `SYSTEM_VARIABLES_ADMIN` | Re-run `.\monitor\start.ps1` |
 | `cdc-reader` keeps restarting | MySQL not ready yet | Wait 30s and check logs again |
 | Dashboard loads but no events / WebSocket fails | `cdc-dashboard` can't reach Redis | Check `docker logs cdc-dashboard` for the Redis connection line |
+| Column names show as `UNKNOWN_COL0`, `UNKNOWN_COL1` | Missing `--binlog-row-metadata=FULL` on MySQL | Recreate `db` container with the updated compose override |
 
 ### Force rebuild all monitor images
 
@@ -211,7 +222,7 @@ monitor/
 ├── start.ps1                    # Start script with auto MySQL grant
 ├── stop.ps1                     # Stop monitor services only
 ├── reader/
-│   ├── reader.py                # Binlog reader — publishes CDC events to Redis
+│   ├── reader.py                # Binlog reader — publishes CDC events to Redis (all databases)
 │   ├── requirements.txt
 │   └── Dockerfile
 └── dashboard/                   # Single Node.js service (API + WebSocket + UI)
@@ -219,5 +230,5 @@ monitor/
     ├── package.json
     ├── Dockerfile
     └── public/
-        └── index.html           # Alpine.js dashboard (table, inline diff, filters, detail panel)
+        └── index.html           # Alpine.js dashboard (inline diff, filters, collapse/full toggle)
 ```
