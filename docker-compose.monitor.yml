@@ -17,7 +17,6 @@ services:
       - --log-bin=mysql-bin
       - --binlog-format=ROW
       - --binlog-row-image=FULL
-      - --binlog-row-metadata=FULL
     volumes:
       - mysql_monitor_data:/var/lib/mysql
 

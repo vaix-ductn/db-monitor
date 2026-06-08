@@ -55,7 +55,7 @@ if (-not $ready) {
 }
 
 # Grant privileges required by cdc-reader to read the binlog (retry up to 3 times)
-$grantSQL = "GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '${DB_USER}'@'%'; GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;"
+$grantSQL = "GRANT REPLICATION SLAVE, REPLICATION CLIENT, SELECT ON *.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;"
 $granted = $false
 for ($g = 0; $g -lt 3; $g++) {
     docker exec $DB_CONTAINER mysql -u root -p$DB_ROOT_PASS -e $grantSQL 2>&1 | Where-Object { $_ -notmatch "Warning" }

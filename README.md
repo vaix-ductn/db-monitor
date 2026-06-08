@@ -164,9 +164,12 @@ All served by the single `cdc-dashboard` service on one port:
 The MySQL user needs the following privileges (applied automatically by `start.ps1`):
 
 ```sql
-GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'dbuser'@'%';
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'dbuser'@'%';
+GRANT REPLICATION SLAVE, REPLICATION CLIENT, SELECT ON *.* TO 'dbuser'@'%';
+FLUSH PRIVILEGES;
 ```
+
+> `SELECT ON *.*` is required so `cdc-reader` can query `information_schema.COLUMNS` to
+> resolve real column names. Without it, all columns appear as `UNKNOWN_COLx`.
 
 MySQL binary logging is enabled via Docker Compose command override:
 
@@ -177,8 +180,10 @@ db:
     - --log-bin=mysql-bin
     - --binlog-format=ROW
     - --binlog-row-image=FULL
-    - --binlog-row-metadata=FULL   # enables real column names (not UNKNOWN_COLx)
 ```
+
+> Compatible with **MySQL 5.7 and MySQL 8.0**. The `--binlog-row-metadata=FULL` option
+> was removed — it is MySQL 8.0+ only and causes MySQL 5.7 containers to fail to start.
 
 ---
 
@@ -203,7 +208,7 @@ Common causes:
 | `Access denied; SUPER privilege` | Missing `SYSTEM_VARIABLES_ADMIN` | Re-run `.\monitor\start.ps1` |
 | `cdc-reader` keeps restarting | MySQL not ready yet | Wait 30s and check logs again |
 | Dashboard loads but no events / WebSocket fails | `cdc-dashboard` can't reach Redis | Check `docker logs cdc-dashboard` for the Redis connection line |
-| Column names show as `UNKNOWN_COL0`, `UNKNOWN_COL1` | Missing `--binlog-row-metadata=FULL` on MySQL | Recreate `db` container with the updated compose override |
+| Column names show as `UNKNOWN_COL0`, `UNKNOWN_COL1` | Missing `SELECT ON *.*` grant for the CDC user | Re-run `.\monitor\start.ps1` to re-apply grants |
 
 ### Force rebuild all monitor images
 
