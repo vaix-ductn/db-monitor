@@ -20,7 +20,7 @@ MySQL binlog
 
 | Service | Role | Technology |
 |---|---|---|
-| `cdc-reader` | Reads MySQL binary log, publishes events to Redis | Python + pymysqlreplication |
+| `cdc-reader` | Reads MySQL binary log, publishes events to Redis | Python + mysql-replication |
 | `cdc-redis` | Event message broker — stores history + real-time push | Redis 7 |
 | `cdc-dashboard` | REST API + WebSocket + dashboard UI, all on one port | Node.js (Express + ws + ioredis) + Alpine.js |
 
@@ -35,7 +35,7 @@ static Alpine.js page served directly by Express.
 - Docker Desktop
 - Docker Compose v2
 - PowerShell 5.1+ (Windows)
-- The project's `docker-compose.yaml` must define a MySQL service named `db` with container name `myapp_db`
+- The project's `docker-compose.yaml` must define a MySQL service named `db` with container name `andes_cloud_db`
 
 ---
 
@@ -73,8 +73,10 @@ The script will:
 ### 3. Run Django migrations (first run only)
 
 ```powershell
-docker exec myapp_app python manage.py migrate
+docker exec <app-container-name> python manage.py migrate
 ```
+
+> Replace `<app-container-name>` with your Django app container name (check with `docker ps`).
 
 ### 4. Open the dashboard
 
@@ -129,9 +131,9 @@ To stop only the monitor services (DB and main app keep running):
 Key settings are defined at the top of `start.ps1`:
 
 ```powershell
-$DB_CONTAINER = "myapp_db"         # MySQL container name
-$DB_ROOT_PASS = "rootpassword"     # MySQL root password
-$DB_USER      = "dbuser"           # MySQL user monitored by cdc-reader
+$DB_CONTAINER = "andes_cloud_db"   # MySQL container name
+$DB_ROOT_PASS = "andes_cloud"      # MySQL root password
+$DB_USER      = "andes_cloud"      # MySQL user monitored by cdc-reader
 ```
 
 The `cdc-reader` service reads these environment variables (set in `docker-compose.monitor.yml`):
@@ -140,10 +142,11 @@ The `cdc-reader` service reads these environment variables (set in `docker-compo
 |---|---|---|
 | `MYSQL_HOST` | `db` | MySQL service name in Docker network |
 | `MYSQL_PORT` | `3306` | MySQL port |
-| `MYSQL_USER` | `dbuser` | MySQL user |
-| `MYSQL_PASSWORD` | `dbpassword` | MySQL password |
-| `MYSQL_DATABASE` | `myapp` | Used for connection only — all databases are monitored |
+| `MYSQL_USER` | `andes_cloud` | MySQL user |
+| `MYSQL_PASSWORD` | `andes_cloud` | MySQL password |
+| `MYSQL_DATABASE` | `andes_cloud` | Used for connection only — all databases are monitored |
 | `REDIS_HOST` | `cdc-redis` | Redis service name |
+| `REDIS_PORT` | `6379` | Redis port |
 
 ---
 
@@ -164,7 +167,7 @@ All served by the single `cdc-dashboard` service on one port:
 The MySQL user needs the following privileges (applied automatically by `start.ps1`):
 
 ```sql
-GRANT REPLICATION SLAVE, REPLICATION CLIENT, SELECT ON *.* TO 'dbuser'@'%';
+GRANT REPLICATION SLAVE, REPLICATION CLIENT, SELECT ON *.* TO 'andes_cloud'@'%';
 FLUSH PRIVILEGES;
 ```
 
@@ -205,7 +208,6 @@ Common causes:
 |---|---|---|
 | `No module named 'mysql_replication'` | Old import name (library changed in v1.0) | Rebuild image: `docker compose ... build cdc-reader` |
 | `Access denied; REPLICATION CLIENT privilege` | Grants not applied | Re-run `.\monitor\start.ps1` |
-| `Access denied; SUPER privilege` | Missing `SYSTEM_VARIABLES_ADMIN` | Re-run `.\monitor\start.ps1` |
 | `cdc-reader` keeps restarting | MySQL not ready yet | Wait 30s and check logs again |
 | Dashboard loads but no events / WebSocket fails | `cdc-dashboard` can't reach Redis | Check `docker logs cdc-dashboard` for the Redis connection line |
 | Column names show as `UNKNOWN_COL0`, `UNKNOWN_COL1` | Missing `SELECT ON *.*` grant for the CDC user | Re-run `.\monitor\start.ps1` to re-apply grants |
@@ -230,10 +232,12 @@ monitor/
 │   ├── reader.py                # Binlog reader — publishes CDC events to Redis (all databases)
 │   ├── requirements.txt
 │   └── Dockerfile
-└── dashboard/                   # Single Node.js service (API + WebSocket + UI)
-    ├── server.js                # Express + ws + ioredis: /events, /schema, /ws
-    ├── package.json
-    ├── Dockerfile
-    └── public/
-        └── index.html           # Alpine.js dashboard (inline diff, filters, collapse/full toggle)
+├── dashboard/                   # Single Node.js service (API + WebSocket + UI)
+│   ├── server.js                # Express + ws + ioredis: /events, /schema, /ws
+│   ├── package.json
+│   ├── Dockerfile
+│   └── public/
+│       └── index.html           # Alpine.js dashboard (inline diff, filters, collapse/full toggle)
+└── standalone/                  # Alternative: single Node.js service, no Docker, no Redis required
+    └── README.md                # See standalone/README.md for install and usage
 ```
