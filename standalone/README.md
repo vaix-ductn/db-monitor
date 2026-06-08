@@ -21,10 +21,32 @@ inside one Node.js process.
 
 ---
 
+## Two ways to run
+
+The **same `app.js`** supports two deployment modes — they only differ in *where the DB
+connection comes from*. `app.js` reads `config.json` if it exists, otherwise it falls back
+to `MYSQL_*` environment variables:
+
+| | **A. Bare-metal** (`install.sh`) | **B. Docker** (compose) |
+|---|---|---|
+| For | An Ubuntu server **without** Docker | Any machine **with** Docker |
+| Config source | `config.json` file | `environment:` vars in the compose file |
+| Needs `config.json`? | ✅ Yes | ❌ No |
+| Needs Node.js pre-installed? | No — `install.sh` installs it | No — it's inside the container |
+| How to run | `./install.sh` → `systemd` service | `docker compose ... up -d` |
+
+> If you run it via Docker and supply `MYSQL_HOST`/`MYSQL_USER`/… as env vars, **you do
+> not need `config.json`** — that's expected, not a bug. `config.json` is only for the
+> bare-metal `install.sh` path below.
+
+---
+
 ## How it finds the database
 
 There is **no auto-discovery** — the binlog protocol requires explicit host, port, user,
-and password (and a privileged replication user). You provide them in **`config.json`**:
+and password (and a privileged replication user).
+
+**Mode A (bare-metal)** — provide them in **`config.json`**:
 
 ```json
 {
@@ -33,8 +55,20 @@ and password (and a privileged replication user). You provide them in **`config.
 }
 ```
 
+**Mode B (Docker)** — provide them as environment variables instead:
+
+```yaml
+environment:
+  MYSQL_HOST: 10.0.0.5
+  MYSQL_PORT: 3306
+  MYSQL_USER: cdc_user
+  MYSQL_PASSWORD: secret
+  SERVER_ID: 100
+  PORT: 3001
+```
+
 The MySQL server can be **on the same machine or anywhere reachable over the network** —
-only `mysql.host` changes. The included `verify.js` checks the connection, binlog config,
+only the host changes. The included `verify.js` checks the connection, binlog config,
 and grants before the service starts, and prints the exact SQL to fix anything missing.
 
 ---
@@ -49,7 +83,7 @@ and grants before the service starts, and prints the exact SQL to fix anything m
 
 ---
 
-## Install
+## Install — Mode A: bare-metal Ubuntu (`install.sh`)
 
 ```bash
 # on the monitoring server
@@ -67,6 +101,35 @@ The installer will:
 6. Health-check `http://localhost:<port>/events`
 
 Then open: **http://&lt;server-ip&gt;:3001**
+
+---
+
+## Install — Mode B: Docker
+
+No `config.json` needed — pass the DB connection as environment variables. Minimal compose:
+
+```yaml
+services:
+  monitor:
+    build: .            # or: image: your-registry/db-monitor
+    container_name: db-monitor
+    environment:
+      MYSQL_HOST: 10.0.0.5
+      MYSQL_PORT: 3306
+      MYSQL_USER: cdc_user
+      MYSQL_PASSWORD: secret
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    restart: always
+```
+
+```bash
+docker compose up -d --build
+```
+
+> A ready-to-use test environment (MySQL + monitor, both in Docker) lives in
+> [`test/`](./test) — see `test/README.md`.
 
 ---
 
