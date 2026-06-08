@@ -7,11 +7,20 @@ const fs = require('fs')
 const mysql = require('mysql2/promise')
 
 const CONFIG_PATH = process.env.CDC_CONFIG || path.join(__dirname, 'config.json')
-if (!fs.existsSync(CONFIG_PATH)) {
-  console.error(`config.json not found at ${CONFIG_PATH}`)
+let cfg
+if (fs.existsSync(CONFIG_PATH)) {
+  cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+} else if (process.env.MYSQL_HOST) {
+  cfg = { mysql: {
+    host: process.env.MYSQL_HOST,
+    port: parseInt(process.env.MYSQL_PORT || '3306', 10),
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+  } }
+} else {
+  console.error(`config.json not found at ${CONFIG_PATH} and no MYSQL_HOST env var`)
   process.exit(1)
 }
-const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
 
 const RED = '\x1b[31m', GREEN = '\x1b[32m', YEL = '\x1b[33m', RESET = '\x1b[0m'
 const ok   = (m) => console.log(`${GREEN}  ✓ ${m}${RESET}`)

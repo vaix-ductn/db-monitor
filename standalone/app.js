@@ -17,12 +17,31 @@ const ZongJi = require('@vlasky/zongji').default // 0.6.x ships a transpiled ESM
 
 // ---- config ----
 const CONFIG_PATH = process.env.CDC_CONFIG || path.join(__dirname, 'config.json')
-if (!fs.existsSync(CONFIG_PATH)) {
-  console.error(`[config] ${CONFIG_PATH} not found. Copy config.example.json → config.json and fill it in.`)
+const config = loadConfig()
+const DB = config.mysql
+
+// config.json takes priority; otherwise fall back to env vars (handy in Docker).
+function loadConfig() {
+  if (fs.existsSync(CONFIG_PATH)) return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+  if (process.env.MYSQL_HOST) {
+    return {
+      mysql: {
+        host: process.env.MYSQL_HOST,
+        port: parseInt(process.env.MYSQL_PORT || '3306', 10),
+        user: process.env.MYSQL_USER,
+        password: process.env.MYSQL_PASSWORD,
+        serverId: parseInt(process.env.SERVER_ID || '100', 10),
+      },
+      server: {
+        port: parseInt(process.env.PORT || '3001', 10),
+        maxEvents: parseInt(process.env.MAX_EVENTS || '500', 10),
+      },
+    }
+  }
+  console.error(`[config] No ${CONFIG_PATH} and no MYSQL_HOST env var. ` +
+                `Copy config.example.json → config.json, or set MYSQL_* env vars.`)
   process.exit(1)
 }
-const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-const DB = config.mysql
 const PORT = (config.server && config.server.port) || 3001
 const MAX_EVENTS = (config.server && config.server.maxEvents) || 500
 const SERVER_ID = DB.serverId || 100

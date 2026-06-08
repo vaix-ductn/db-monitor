@@ -1,0 +1,52 @@
+# Self-contained test environment for the standalone DB Monitor.
+# Spins up a MySQL (binlog enabled, sample schema + cdc_user) AND the monitor,
+# both in Docker. No andescloud needed.
+#
+#   cd standalone/test
+#   docker compose -f docker-compose.test.yml up --build
+#
+# Then open http://localhost:3001 and run some INSERT/UPDATE/DELETE (see README).
+
+services:
+
+  test-mysql:
+    image: mysql:8.0
+    container_name: cdc-test-mysql
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: shop
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      # Use TCP (-h127.0.0.1), not the socket, so "healthy" means the port is
+      # actually accepting connections — otherwise the monitor connects during
+      # MySQL's init phase and logs a few harmless reconnect errors.
+      test: ["CMD", "mysqladmin", "ping", "-h127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  monitor:
+    build:
+      context: ..
+    container_name: cdc-test-monitor
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: test-mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: cdc_user
+      MYSQL_PASSWORD: cdc_pass
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    restart: always
