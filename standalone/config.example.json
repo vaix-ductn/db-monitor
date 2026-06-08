@@ -1,0 +1,13 @@
+{
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "cdc_user",
+    "password": "CHANGE_ME",
+    "serverId": 100
+  },
+  "server": {
+    "port": 3001,
+    "maxEvents": 500
+  }
+}

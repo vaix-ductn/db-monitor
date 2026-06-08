@@ -1,0 +1,17 @@
+{
+  "name": "db-monitor-standalone",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone CDC dashboard — single Node.js service (binlog reader + web UI), no Docker, no Redis",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "verify": "node verify.js"
+  },
+  "dependencies": {
+    "@vlasky/zongji": "^0.6.1",
+    "express": "^4.19.2",
+    "mysql2": "^3.22.5",
+    "ws": "^8.18.0"
+  }
+}
