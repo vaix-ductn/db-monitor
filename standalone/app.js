@@ -13,7 +13,7 @@ const http = require('http')
 const express = require('express')
 const { WebSocketServer } = require('ws')
 const mysql = require('mysql2/promise')
-const ZongJi = require('@vlasky/zongji').default // 0.6.x ships a transpiled ESM default export
+let ZongJi // loaded via dynamic import() — require(ESM) only works on Node ≥ 20.19; dynamic import() works on all Node 18+
 
 // ---- config ----
 const CONFIG_PATH = process.env.CDC_CONFIG || path.join(__dirname, 'config.json')
@@ -157,9 +157,15 @@ function startBinlog() {
 }
 
 // ---- boot ----
-server.listen(PORT, () => {
-  console.log(`[web] dashboard on http://localhost:${PORT}`)
-  refreshSchema()
-  setInterval(refreshSchema, 60000)
-  startBinlog()
-})
+// Dynamic import required because @vlasky/zongji 0.6.x is ESM-only.
+// require(ESM) is blocked on Node 18; dynamic import() works on Node 18+.
+;(async () => {
+  const mod = await import('@vlasky/zongji')
+  ZongJi = mod.default
+  server.listen(PORT, () => {
+    console.log(`[web] dashboard on http://localhost:${PORT}`)
+    refreshSchema()
+    setInterval(refreshSchema, 60000)
+    startBinlog()
+  })
+})()

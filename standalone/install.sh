@@ -14,6 +14,7 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export APP_DIR
 SERVICE_NAME="db-monitor"
 NODE_MAJOR=20
 
@@ -55,7 +56,6 @@ else
   ' "$DB_HOST" "$DB_PORT" "$DB_USER" "$DB_PASS" "$APP_PORT"
   ok "      config.json written."
 fi
-export APP_DIR
 
 # ---------------------------------------------------------------------------
 # 3. Dependencies
