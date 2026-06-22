@@ -28,9 +28,10 @@
         schema: {},
         _nextId: 0,
         filters: { operation: '', database: '', table: '', keyword: '' },
-        excludedTables: [],   // tables hidden from dashboard
-        showSettings: false,  // settings modal visibility
-        settingsSearch: '',   // search box inside settings modal
+        excludedTables: [],    // tables hidden from dashboard
+        showSettings: false,   // settings modal visibility
+        settingsDatabase: '',  // database filter inside settings modal
+        settingsSearch: '',    // table search inside settings modal
         ws: null,
         retryDelay: 1000,
 
@@ -93,13 +94,16 @@
           this._saveExclusions()
         },
 
+        // Show/Hide All operate on the currently visible list (respects db + search filter)
         showAllTables() {
-          this.excludedTables = []
+          const visible = new Set(this.settingsTables)
+          this.excludedTables = this.excludedTables.filter(t => !visible.has(t))
           this._saveExclusions()
         },
 
         hideAllTables() {
-          this.excludedTables = [...this.allTables]
+          const toAdd = this.settingsTables.filter(t => !this.excludedTables.includes(t))
+          this.excludedTables = [...this.excludedTables, ...toAdd]
           this._saveExclusions()
         },
 
@@ -118,17 +122,34 @@
           return [...new Set(this.events.map(e => e.table))].sort()
         },
 
-        // All known tables (schema + seen in events) — used in settings modal
+        // All known tables across all databases (schema + seen in events)
         get allTables() {
           const fromSchema = Object.values(this.schema).flat()
           const fromEvents = this.events.map(e => e.table)
           return [...new Set([...fromSchema, ...fromEvents])].filter(Boolean).sort()
         },
 
-        // Tables shown in settings modal after applying search filter
+        // All known databases (schema + seen in events)
+        get settingsDatabases() {
+          const fromSchema = Object.keys(this.schema)
+          const fromEvents = this.events.map(e => e.database).filter(Boolean)
+          return [...new Set([...fromSchema, ...fromEvents])].sort()
+        },
+
+        // Tables shown in settings modal — filtered by selected database then by search text
         get settingsTables() {
+          let base
+          if (this.settingsDatabase) {
+            const fromSchema = this.schema[this.settingsDatabase] || []
+            const fromEvents = this.events
+              .filter(e => e.database === this.settingsDatabase)
+              .map(e => e.table)
+            base = [...new Set([...fromSchema, ...fromEvents])].filter(Boolean).sort()
+          } else {
+            base = this.allTables
+          }
           const q = this.settingsSearch.toLowerCase()
-          return q ? this.allTables.filter(t => t.toLowerCase().includes(q)) : this.allTables
+          return q ? base.filter(t => t.toLowerCase().includes(q)) : base
         },
 
         get filtered() {
@@ -246,7 +267,7 @@
              x-model="filters.keyword" />
 
       <!-- Settings button — shows exclusion count badge when tables are hidden -->
-      <button @click="showSettings = true; settingsSearch = ''"
+      <button @click="showSettings = true; settingsDatabase = ''; settingsSearch = ''"
               class="relative bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm rounded px-3 py-1 border border-gray-700 whitespace-nowrap transition-colors flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -343,13 +364,29 @@
                   class="text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none ml-4">✕</button>
         </div>
 
-        <!-- Search + bulk actions -->
+        <!-- Toolbar: database filter + table search + bulk actions -->
         <div class="px-4 py-2 border-b border-gray-700 shrink-0 space-y-2">
+
+          <!-- Database selector -->
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-500 shrink-0">Database</span>
+            <select x-model="settingsDatabase"
+                    class="flex-1 bg-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 outline-none focus:border-gray-500">
+              <option value="">All databases</option>
+              <template x-for="db in settingsDatabases" :key="db">
+                <option :value="db" x-text="db"></option>
+              </template>
+            </select>
+          </div>
+
+          <!-- Table search -->
           <input type="text"
                  placeholder="Search tables..."
                  x-model="settingsSearch"
                  class="w-full bg-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 outline-none focus:border-gray-500" />
-          <div class="flex gap-3">
+
+          <!-- Bulk actions + count -->
+          <div class="flex gap-3 items-center">
             <button @click="showAllTables()"
                     class="text-xs text-blue-400 hover:text-blue-300 transition-colors">
               Show All
@@ -359,7 +396,7 @@
               Hide All
             </button>
             <span class="text-xs text-gray-600 ml-auto"
-                  x-text="allTables.length + ' tables total'"></span>
+                  x-text="settingsTables.length + ' table' + (settingsTables.length !== 1 ? 's' : '')"></span>
           </div>
         </div>
 
