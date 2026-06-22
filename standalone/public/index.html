@@ -12,6 +12,7 @@
       d: { label: 'DELETE',   cls: 'bg-red-900 text-red-300' },
       r: { label: 'SNAPSHOT', cls: 'bg-gray-700 text-gray-300' },
     }
+    const LS_KEY = 'cdc-excluded-tables'
 
     function esc(s) {
       return String(s)
@@ -27,10 +28,19 @@
         schema: {},
         _nextId: 0,
         filters: { operation: '', database: '', table: '', keyword: '' },
+        excludedTables: [],   // tables hidden from dashboard
+        showSettings: false,  // settings modal visibility
+        settingsSearch: '',   // search box inside settings modal
         ws: null,
         retryDelay: 1000,
 
         init() {
+          // Restore exclusions from localStorage
+          try {
+            const saved = localStorage.getItem(LS_KEY)
+            if (saved) this.excludedTables = JSON.parse(saved)
+          } catch (_) {}
+
           this.loadSchema()
           this.loadEvents()
           this.connectWS()
@@ -69,6 +79,34 @@
           }
         },
 
+        // ---- table exclusion ----
+        isExcluded(table) {
+          return this.excludedTables.includes(table)
+        },
+
+        toggleTableExclusion(table) {
+          if (this.isExcluded(table)) {
+            this.excludedTables = this.excludedTables.filter(t => t !== table)
+          } else {
+            this.excludedTables = [...this.excludedTables, table]
+          }
+          this._saveExclusions()
+        },
+
+        showAllTables() {
+          this.excludedTables = []
+          this._saveExclusions()
+        },
+
+        hideAllTables() {
+          this.excludedTables = [...this.allTables]
+          this._saveExclusions()
+        },
+
+        _saveExclusions() {
+          localStorage.setItem(LS_KEY, JSON.stringify(this.excludedTables))
+        },
+
         // ---- derived data ----
         get databases() { return Object.keys(this.schema).sort() },
 
@@ -80,8 +118,22 @@
           return [...new Set(this.events.map(e => e.table))].sort()
         },
 
+        // All known tables (schema + seen in events) — used in settings modal
+        get allTables() {
+          const fromSchema = Object.values(this.schema).flat()
+          const fromEvents = this.events.map(e => e.table)
+          return [...new Set([...fromSchema, ...fromEvents])].filter(Boolean).sort()
+        },
+
+        // Tables shown in settings modal after applying search filter
+        get settingsTables() {
+          const q = this.settingsSearch.toLowerCase()
+          return q ? this.allTables.filter(t => t.toLowerCase().includes(q)) : this.allTables
+        },
+
         get filtered() {
           return this.events.filter(e => {
+            if (this.excludedTables.includes(e.table))              return false
             if (this.filters.database  && e.database  !== this.filters.database)  return false
             if (this.filters.operation && e.operation !== this.filters.operation)  return false
             if (this.filters.table     && e.table     !== this.filters.table)      return false
@@ -93,7 +145,6 @@
         },
 
         // Group events that share database + table + operation + field set.
-        // Each group renders as a matrix: rows = fields, columns = records.
         get groups() {
           const map = new Map()
           for (const e of this.filtered) {
@@ -106,7 +157,7 @@
             if (!map.has(key)) {
               map.set(key, {
                 key,
-                database: e.database,
+                database:  e.database,
                 table:     e.table,
                 operation: e.operation,
                 badge:     OP_BADGE[e.operation] || { label: e.operation, cls: 'bg-gray-700 text-gray-300' },
@@ -194,19 +245,32 @@
              class="bg-gray-800 text-gray-200 text-sm rounded px-2 py-1 border border-gray-700 flex-1 min-w-40"
              x-model="filters.keyword" />
 
+      <!-- Settings button — shows exclusion count badge when tables are hidden -->
+      <button @click="showSettings = true; settingsSearch = ''"
+              class="relative bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm rounded px-3 py-1 border border-gray-700 whitespace-nowrap transition-colors flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+        </svg>
+        Tables
+        <span x-show="excludedTables.length > 0"
+              class="bg-yellow-600 text-yellow-100 text-[10px] font-bold rounded-full px-1.5 py-0 leading-4"
+              x-text="excludedTables.length + ' hidden'"></span>
+      </button>
+
       <button @click="clearScreen()"
               class="bg-gray-800 hover:bg-red-900 text-gray-200 hover:text-red-200 text-sm rounded px-3 py-1 border border-gray-700 whitespace-nowrap transition-colors">
         Clear
       </button>
     </div>
 
-    <!-- Grouped card view: one card per (database, table, operation, field-set) -->
+    <!-- Grouped card view -->
     <div class="flex-1 overflow-auto p-4 space-y-4">
 
       <template x-for="group in groups" :key="group.key">
         <div class="border border-gray-700 rounded-lg overflow-hidden">
 
-          <!-- Card header: shared metadata for this group -->
+          <!-- Card header -->
           <div class="flex items-center gap-3 px-4 py-2 bg-gray-800 border-b border-gray-700">
             <span class="px-2 py-0.5 rounded text-xs font-bold" :class="group.badge.cls"
                   x-text="group.badge.label"></span>
@@ -221,11 +285,9 @@
             <table class="text-xs font-mono w-full border-collapse">
               <thead>
                 <tr class="bg-gray-800/50 border-b border-gray-700">
-                  <!-- Field name column header -->
                   <th class="px-3 py-2 text-left text-gray-500 font-normal border-r border-gray-700 w-40 whitespace-nowrap">
                     Field
                   </th>
-                  <!-- One column per record, showing its index and timestamp -->
                   <template x-for="(rec, idx) in group.records" :key="rec._id">
                     <th class="px-3 py-2 text-left font-normal whitespace-nowrap min-w-[180px]">
                       <span class="text-gray-500">#<span x-text="idx + 1"></span></span>
@@ -237,11 +299,7 @@
               <tbody>
                 <template x-for="field in group.fields" :key="field">
                   <tr class="border-b border-gray-800 hover:bg-gray-800/30 transition-colors">
-                    <!-- Field name -->
-                    <td class="px-3 py-1.5 text-gray-400 border-r border-gray-800 whitespace-nowrap">
-                      <span x-text="field"></span>
-                    </td>
-                    <!-- Value per record -->
+                    <td class="px-3 py-1.5 text-gray-400 border-r border-gray-800 whitespace-nowrap" x-text="field"></td>
                     <template x-for="rec in group.records" :key="rec._id">
                       <td class="px-3 py-1.5 break-all"
                           x-html="cellHtml(rec, field, group.operation)"></td>
@@ -255,11 +313,89 @@
         </div>
       </template>
 
-      <!-- Empty state -->
       <div x-show="groups.length === 0" class="text-center text-gray-500 py-16">
-        No events yet — waiting for CDC data...
+        No events — waiting for CDC data or all tables are hidden.
       </div>
 
+    </div>
+
+    <!-- ===== Settings modal ===== -->
+    <div x-show="showSettings"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+         @click.self="showSettings = false"
+         @keydown.escape.window="showSettings = false">
+
+      <div class="bg-gray-900 border border-gray-700 rounded-lg w-96 max-h-[80vh] flex flex-col shadow-2xl">
+
+        <!-- Modal header -->
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
+          <div>
+            <h2 class="text-sm font-bold text-white">Table Visibility</h2>
+            <p class="text-xs text-gray-500 mt-0.5">Uncheck tables to hide them from the dashboard</p>
+          </div>
+          <button @click="showSettings = false"
+                  class="text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none ml-4">✕</button>
+        </div>
+
+        <!-- Search + bulk actions -->
+        <div class="px-4 py-2 border-b border-gray-700 shrink-0 space-y-2">
+          <input type="text"
+                 placeholder="Search tables..."
+                 x-model="settingsSearch"
+                 class="w-full bg-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 outline-none focus:border-gray-500" />
+          <div class="flex gap-3">
+            <button @click="showAllTables()"
+                    class="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              Show All
+            </button>
+            <button @click="hideAllTables()"
+                    class="text-xs text-gray-400 hover:text-gray-200 transition-colors">
+              Hide All
+            </button>
+            <span class="text-xs text-gray-600 ml-auto"
+                  x-text="allTables.length + ' tables total'"></span>
+          </div>
+        </div>
+
+        <!-- Table list -->
+        <div class="overflow-y-auto flex-1 py-1">
+          <template x-if="settingsTables.length === 0">
+            <p class="text-xs text-gray-500 text-center py-6">No tables match your search.</p>
+          </template>
+          <template x-for="table in settingsTables" :key="table">
+            <label class="flex items-center gap-3 px-4 py-1.5 hover:bg-gray-800 cursor-pointer group">
+              <input type="checkbox"
+                     :checked="!isExcluded(table)"
+                     @change="toggleTableExclusion(table)"
+                     class="accent-blue-500 shrink-0" />
+              <span class="text-xs font-mono text-gray-200 group-hover:text-white transition-colors break-all"
+                    x-text="table"></span>
+              <span x-show="isExcluded(table)"
+                    class="text-[10px] text-yellow-600 ml-auto shrink-0">hidden</span>
+            </label>
+          </template>
+        </div>
+
+        <!-- Modal footer -->
+        <div class="px-4 py-2.5 border-t border-gray-700 shrink-0 flex items-center justify-between">
+          <span class="text-xs text-gray-500"
+                x-text="excludedTables.length === 0
+                  ? 'All tables visible'
+                  : excludedTables.length + ' table' + (excludedTables.length > 1 ? 's' : '') + ' hidden'">
+          </span>
+          <button @click="showSettings = false"
+                  class="bg-blue-700 hover:bg-blue-600 text-white text-xs rounded px-3 py-1.5 transition-colors">
+            Done
+          </button>
+        </div>
+
+      </div>
     </div>
 
   </div>
